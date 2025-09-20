@@ -1,0 +1,26 @@
+SpendGuard (browser-based)
+What it is: a tiny personal finance tool that runs entirely in the browser. You upload a PDF bank statement or CSV, it extracts transactions, categorises spend, draws a Top Categories chart, and surfaces unusually large outflows (95th percentile). No server—everything happens locally on your machine.
+Why it’s interesting: it mixes real data wrangling with lightweight UX. I parse messy statement text, normalise it, and run Python analytics in the browser for privacy and portability.
+How it works (quick):
+* PDF.js reads the PDF text; a small regex parser rebuilds rows into date, description, amount.
+
+* If you upload CSV, headers are auto-detected.
+
+* In the browser I load Pyodide (WebAssembly Python), then use pandas to clean data and simple keyword rules to assign categories.
+
+* matplotlib generates the category bar chart, which is embedded as a PNG.
+
+* Outliers = top 5% of debit magnitudes (95th percentile) to highlight potential one-offs.
+
+Stack:
+HTML/CSS/JS, PDF.js, Pyodide, pandas, matplotlib. Fully client-side for privacy.
+What I’d improve next:
+   * Smarter merchant normalisation + custom override rules.
+
+   * Date range filters and monthly summaries.
+
+   * Exclude internal transfers (Monzo/Revolut “Round Up”, pots) from spend totals.
+
+   * Export of the categorised CSV + simple unit tests for the parser.
+
+Short, simple, and shows practical Python + data skills in a browser environment.
