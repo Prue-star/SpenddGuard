@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SpendGuard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { --bg:#0f1014; --ink:#f3f4f8; --muted:#b6b8c3; --card:#171922; --line:#242636; --accent:#8b5cf6; }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 800px at 80% -20%, #1d1a2c 0%, #0f1014 50%);color:var(--ink);
+       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; padding:24px}
+  h1{margin:0;font-size:1.8rem} .sub{color:var(--muted);margin:6px 0 18px}
+  .wrap{max-width:1100px;margin:0 auto}
+  .card{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));
+        border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px}
+  .bar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:14px 0}
+  input[type="file"]{background:var(--card);color:var(--ink);border:1px dashed rgba(255,255,255,.18);
+        padding:9px 12px;border-radius:10px}
+  button{background:var(--accent);border:none;color:#fff;padding:10px 14px;border-radius:10px;font-weight:700;cursor:pointer}
+  .pill{border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:6px 10px;color:var(--muted)}
+  .grid{display:grid;gap:16px;grid-template-columns:1fr} @media(min-width:980px){.grid{grid-template-columns:1.2fr .8fr}}
+  .kpis{display:grid;gap:10px;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .kpi{background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px}
+  .kpi .v{font-weight:800;font-size:1.2rem}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;
+        overflow:hidden}
+  th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--muted)}
+  img.chart{width:100%;height:auto;border:1px solid var(--line);border-radius:12px}
+  .loader{display:none;gap:8px;align-items:center} .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);opacity:.7;animation:b 1s infinite alternate}
+  .dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}@keyframes b{to{transform:translateY(-5px);opacity:1}}
+  .help{color:var(--muted);font-size:.95rem;line-height:1.4}
+  .small{font-size:.9rem;color:var(--muted)}
+  .code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .warn{background:#2a1f1f;border:1px solid #4b2a2a;color:#f2cccc;border-radius:10px;padding:10px;margin-top:10px}
+  .good{background:#1f2a23;border:1px solid #2e5737;color:#d7f2df;border-radius:10px;padding:10px;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SpendGuard</h1>
+  <div class="sub">Upload a <strong>PDF bank statement</strong> or <strong>CSV</strong>. We’ll extract transactions, categorise spends, chart top categories, and surface big outliers — all client-side with Python (Pyodide).</div>
+
+  <div class="bar">
+    <input id="file" type="file" accept=".pdf,.csv" />
+    <button id="sample">Use sample data</button>
+    <span class="pill">Expected columns: <span class="code">date, description, amount</span> (auto-detected)</span>
+    <span class="loader" id="loader"><span class="dot"></span><span class="dot"></span><span class="dot"></span> Running…</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Overview</h2>
+      <div class="kpis">
+        <div class="kpi"><div class="small">Transactions</div><div class="v" id="k_txn">—</div></div>
+        <div class="kpi"><div class="small">Total Spent (£)</div><div class="v" id="k_spent">—</div></div>
+        <div class="kpi"><div class="small">Total Income (£)</div><div class="v" id="k_income">—</div></div>
+      </div>
+      <div id="parseMsg" class="small" style="margin-top:10px;color:#d7defa"></div>
+    </div>
+
+    <div class="card">
+      <h2>Top spend by category</h2>
+      <img id="chart" class="chart" alt="Spend by Category Chart" />
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Parsed transactions</h2>
+    <div id="tbl" class="small">No data yet.</div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Potential big spends (95th percentile+)</h2>
+    <div id="tblSus" class="small">No data yet.</div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>Help & tips</h2>
+    <div class="help">
+      <p><strong>Why CSV?</strong> Analytics & ML tools expect table data — CSV is universal. <em>But you can just upload a PDF here</em>; we use PDF.js to read text and extract rows automatically.</p>
+      <p><strong>If parsing fails:</strong> PDF layouts vary by bank (some use two-line rows or separate columns). You’ll see a warning with the first unparsed lines. You can tweak the date/amount regex below.</p>
+      <details>
+        <summary>How to export CSV from most banks (generic)</summary>
+        <ol>
+          <li>Log into online banking → go to <em>Transactions</em> or <em>Statements</em>.</li>
+          <li>Choose the date range → look for <em>Download</em> or <em>Export</em>.</li>
+          <li>Select <strong>CSV</strong> (sometimes called “Spreadsheet (CSV)”).</li>
+        </ol>
+        <p>If the site only gives PDF, that’s fine — upload the PDF here.</p>
+      </details>
+    </div>
+  </div>
+</div>
+
+<!-- PDF.js (for PDF text extraction) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.js" integrity="sha512-jcYkNY4yX4eK00Q0Yk3g6N7iWv3u7Yg6Y+6Thh1o3zQZqkOBdVv6Q/60FQ0cM5V1vN3X9dn8fJtY+g7smyE1+g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+  // Configure worker for PDF.js
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js";
+
+  async function extractTextFromPDF(arrayBuffer) {
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const allLines = [];
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      const strings = content.items.map(it => it.str);
+      // Join chunks into lines (PDF text often comes as fragmented pieces)
+      const text = strings.join(" ").replace(/\s{2,}/g, " ");
+      // Heuristic split: try to restore line-like breaks near dates or amounts
+      const split = text
+        .replace(/(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/g, "\n$1 ")
+        .replace(/(\d{1,2}\s+[A-Za-z]{3,}\s+\d{2,4})/g, "\n$1 ")
+        .replace(/([£]?\(?-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?)/g, " $1\n")
+        .split(/\n+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+      allLines.push(...split);
+    }
+    return allLines;
+  }
+
+  // Parse lines into {date, description, amount}
+  function parseTransactionsFromLines(lines) {
+    const parsed = [];
+    const rejected = [];
+    const date1 = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/; // 14/03/2025 or 14-03-25
+    const date2 = /^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{2,4})/;   // 14 Mar 2025
+    const amtPattern = /(\(?[-−–—]?\s*£?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?)/; // handles negatives & (£…)
+
+    const monthMap = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
+
+    function normDate(d, m, y, isTextMonth=false){
+      if (isTextMonth) {
+        m = monthMap[(m||"").slice(0,3).toLowerCase()] || 1;
+      }
+      const yyyy = String(y).length === 2 ? (Number(y) > 50 ? 1900+Number(y) : 2000+Number(y)) : Number(y);
+      const mm = String(m).padStart(2,"0");
+      const dd = String(d).padStart(2,"0");
+      return `${yyyy}-${mm}-${dd}`;
+    }
+    function normAmount(s){
+      if (!s) return NaN;
+      let str = s.replace(/\s+/g,"").replace(/£/g,"").replace(/,/g,"");
+      let neg = false;
+      if (str.startsWith("(") && str.endsWith(")")) { neg = true; str = str.slice(1,-1); }
+      if (str.startsWith("−") || str.startsWith("–") || str.startsWith("—") || str.startsWith("-")) neg = true;
+      str = str.replace(/[−–—]/g,""); // remove unicode minus dashes
+      const val = parseFloat(str);
+      return neg ? -Math.abs(val) : val;
+    }
+
+    // Try to rebuild full lines by concatenating close neighbors that look like date ... amount
+    for (let raw of lines) {
+      const line = raw.replace(/\s{2,}/g," ").trim();
+
+      // find a date at start
+      let dmatch = line.match(date1) || line.match(date2);
+      if (!dmatch) { rejected.push(line); continue; }
+
+      let isTextMonth = !!line.match(date2);
+      let d = dmatch[1], m = dmatch[2], y = dmatch[3];
+      const dateISO = normDate(Number(d), isTextMonth?m:Number(m), Number(y), isTextMonth);
+
+      // find amount at end
+      const am = line.match(new RegExp(amtPattern.source + "\\s*$"));
+      if (!am) { rejected.push(line); continue; }
+
+      const amount = normAmount(am[1]);
+      if (Number.isNaN(amount)) { rejected.push(line); continue; }
+
+      // description is the middle
+      const desc = line
+        .slice(dmatch[0].length, line.length - am[1].length)
+        .replace(/\s{2,}/g," ")
+        .trim();
+
+      // skip blank desc lines like totals
+      if (!desc || /balance|opening|closing|total/i.test(desc)) { continue; }
+
+      parsed.push({ date: dateISO, description: desc, amount });
+    }
+
+    return { parsed, rejected };
+  }
+</script>
+
+<!-- Pyodide (Python in the browser) -->
+<script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
+<script>
+  let pyodide;
+
+  async function initPy() {
+    pyodide = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/" });
+    await pyodide.loadPackage(["pandas","matplotlib"]);
+  }
+
+  function setLoading(on){ document.getElementById("loader").style.display = on ? "inline-flex" : "none"; }
+  function htmlEscape(s){ return s.replace(/[&<>"]/g,m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[m])); }
+
+  async function runPandasOnRows(rows){
+    // Write CSV into Pyodide FS
+    const header = "date,description,amount\n";
+    const csv = header + rows.map(r => `${r.date},${JSON.stringify(r.description).slice(1,-1)},${r.amount}`).join("\n");
+    const enc = new TextEncoder().encode(csv);
+    pyodide.FS.writeFile("/tmp.csv", enc);
+
+    const code = `
+import pandas as pd, io, base64, re, numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import json
+
+df = pd.read_csv('/tmp.csv')
+df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+if 'date' in df.columns:
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+
+# Categorisation (adjust freely)
+rules = [
+    (r'TESCO|SAINSBURY|ALDI|LIDL|ASDA|MORRISONS', 'Groceries'),
+    (r'UBER|BOLT|TFL|TRANSPORT FOR LONDON|NATIONAL EXPRESS|STAGECOACH', 'Transport'),
+    (r'STARBUCKS|COSTA|PRET|MCDONALD|NANDO|KFC|GREGGS', 'Dining & Coffee'),
+    (r'AMAZON|EBAY|ETSY|ARGOS|CURRYS|IKEA', 'Shopping'),
+    (r'RENT|LANDLORD|MORTGAGE', 'Housing'),
+    (r'EDF|E\\.ON|OCTOPUS|BRITISH GAS|BT|VIRGIN MEDIA|VODAFONE|THREE|O2', 'Utilities & Internet'),
+    (r'GYM|PUREGYM|THE GYM|EVERLAST|DAVID LLOYD', 'Fitness'),
+    (r'PAYROLL|SALARY|PAYE|HMRC|REFUND', 'Income'),
+]
+import re
+def cat(t):
+    t = (str(t) if t is not None else '').upper()
+    for pat, c in rules:
+        if re.search(pat, t):
+            return c
+    return 'Other'
+df['category'] = df['description'].apply(cat)
+
+# KPIs
+total_spent = float(abs(df.loc[df['amount'] < 0, 'amount'].sum()))
+total_income = float(df.loc[df['amount'] > 0, 'amount'].sum())
+txn_count = int(len(df))
+
+# Spend by category
+sb = (df.assign(debit=df['amount'].where(df['amount'] < 0, 0).abs())
+        .groupby('category')['debit'].sum()
+        .sort_values(ascending=False)
+        .head(10))
+
+# Chart to base64
+fig, ax = plt.subplots()
+sb.plot(kind='bar', ax=ax)
+ax.set_title('Top 10 Spend by Category'); ax.set_xlabel('Category'); ax.set_ylabel('Total Spend (£)')
+fig.tight_layout()
+buf = io.BytesIO(); fig.savefig(buf, format='png', dpi=160); plt.close(fig)
+import base64
+img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+# Big spends (95th percentile)
+debits = df.loc[df['amount'] < 0, 'amount'].abs()
+thr = float(debits.quantile(0.95)) if len(debits) else None
+sus = df.loc[(df['amount'] < 0) & (df['amount'].abs() >= thr)] if thr is not None else df.head(0)
+show_cols = [c for c in ['date','description','amount','category'] if c in sus.columns]
+sus = sus.sort_values(by='amount')  # most negative first
+
+json.dumps({
+  'summary': {'transactions': txn_count, 'total_spent': total_spent, 'total_income': total_income},
+  'chart': 'data:image/png;base64,' + img_b64,
+  'spend_table': sb.reset_index().rename(columns={'debit':'Total Spend (£)'}).to_html(index=False, float_format=lambda x: f'£{x:,.2f}'),
+  'sus_table': sus[show_cols].to_html(index=False)
+})
+`;
+    const out = await pyodide.runPythonAsync(code);
+    return JSON.parse(out);
+  }
+
+  function setResults(res, previewRowsMsg=""){
+    // KPIs
+    document.getElementById("k_txn").textContent = res.summary.transactions.toLocaleString();
+    document.getElementById("k_spent").textContent = res.summary.total_spent.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    document.getElementById("k_income").textContent = res.summary.total_income.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    // Chart + tables
+    document.getElementById("chart").src = res.chart;
+    document.getElementById("tbl").innerHTML = res.spend_table;
+    document.getElementById("tblSus").innerHTML = res.sus_table;
+    // Parse message
+    document.getElementById("parseMsg").innerHTML = previewRowsMsg;
+  }
+
+  function showWarn(msg){
+    document.getElementById("parseMsg").innerHTML = `<div class="warn">${msg}</div>`;
+  }
+  function showGood(msg){
+    document.getElementById("parseMsg").innerHTML = `<div class="good">${msg}</div>`;
+  }
+
+  async function handleCSV(arrayBuffer){
+    // Read CSV rows in JS (just to preview count), then let Python handle it
+    const text = new TextDecoder().decode(arrayBuffer);
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    // minimal sniff
+    const header = (lines[0]||"").toLowerCase();
+    if (!/date/.test(header) || !/amount/.test(header)) {
+      showWarn("CSV header didn’t look like transactions. Expected columns like <span class='code'>date, description, amount</span>.");
+    } else {
+      showGood("CSV detected and parsed.");
+    }
+    // Build row objects quickly for Python
+    const cols = lines[0].split(",");
+    const idxDate = cols.findIndex(c=>/date/i.test(c));
+    const idxDesc = cols.findIndex(c=>/desc|merchant|narrative/i.test(c));
+    const idxAmt = cols.findIndex(c=>/amount|debit|credit|value|amt/i.test(c));
+    const rows = [];
+    for (let i=1;i<lines.length;i++){
+      const parts = lines[i].split(",");
+      if (parts.length<2) continue;
+      const d = parts[idxDate]||"";
+      const desc = idxDesc>=0 ? parts[idxDesc] : "";
+      let amt = (idxAmt>=0 ? parts[idxAmt] : "0").replace(/£|,/g,"");
+      rows.push({date:d, description:desc, amount: parseFloat(amt)||0});
+    }
+    return rows;
+  }
+
+  async function handlePDF(arrayBuffer){
+    const lines = await extractTextFromPDF(arrayBuffer);
+    const { parsed, rejected } = parseTransactionsFromLines(lines);
+    let msg = `Parsed ${parsed.length.toLocaleString()} rows from PDF.`;
+    if (rejected.length) {
+      // Show first few unparsed lines to help user tweak
+      const sample = rejected.slice(0,5).map(l=>`• ${htmlEscape(l)}`).join("<br/>");
+      msg += `<br/>Unparsed examples (first ${Math.min(5,rejected.length)}):<br/>${sample}`;
+      showWarn(msg);
+    } else {
+      showGood(msg);
+    }
+    return parsed;
+  }
+
+  function buildSampleRows(){
+    const rows = [];
+    const start = new Date("2025-01-01");
+    function rnd(min,max){ return Math.round((min + Math.random()*(max-min))*100)/100; }
+    const merchants = [
+      ["TESCO", -60, -8], ["SAINSBURY", -50, -10], ["ALDI", -45, -7],
+      ["UBER", -25, -6], ["TFL", -10, -2],
+      ["STARBUCKS", -15, -3], ["NANDO", -22, -8],
+      ["AMAZON", -120, -15], ["ARGOS", -150, -20],
+      ["VODAFONE", -60, -20], ["PUREGYM", -30, -10]
+    ];
+    for (let i=0;i<120;i++){
+      const d = new Date(start.getTime() + i*86400000);
+      if (d.getDate()===25) rows.push({date: d.toISOString().slice(0,10), description:"PAYROLL LTD", amount: 1800});
+      if (d.getDate()===1) rows.push({date: d.toISOString().slice(0,10), description:"LANDLORD RENT", amount: -900});
+      const n = 2+Math.floor(Math.random()*3);
+      for (let j=0;j<n;j++){
+        const [m, hi, lo] = merchants[Math.floor(Math.random()*merchants.length)];
+        rows.push({date: d.toISOString().slice(0,10), description:m, amount: -rnd(lo,hi)});
+      }
+    }
+    rows.push({date:"2025-03-14", description:"UBER LUX", amount:-220.5});
+    rows.push({date:"2025-06-18", description:"STARBUCKS CORPORATE CATERING", amount:-310.25});
+    showGood("Loaded sample dataset.");
+    return rows;
+  }
+
+  async function main(){
+    await initPy();
+    const fileInput = document.getElementById("file");
+    const sampleBtn = document.getElementById("sample");
+
+    fileInput.addEventListener("change", async () => {
+      if (!fileInput.files.length) return;
+      setLoading(true);
+      try{
+        const f = fileInput.files[0];
+        const buf = await f.arrayBuffer();
+        let rows = [];
+        if (f.name.toLowerCase().endsWith(".pdf")) {
+          rows = await handlePDF(buf);
+        } else {
+          rows = await handleCSV(buf);
+        }
+        if (!rows.length) { showWarn("No transactions parsed. Try another statement, or tweak the regex in the code."); setLoading(false); return; }
+        const res = await runPandasOnRows(rows);
+        setResults(res);
+      }catch(err){
+        showWarn("Error: " + (err?.message || err));
+        console.error(err);
+      }finally{ setLoading(false); }
+    });
+
+    sampleBtn.addEventListener("click", async ()=>{
+      setLoading(true);
+      try{
+        const rows = buildSampleRows();
+        const res = await runPandasOnRows(rows);
+        setResults(res);
+      }catch(err){
+        showWarn("Sample error: " + (err?.message || err));
+      }finally{ setLoading(false); }
+    });
+  }
+
+  main();
+</script>
+</body>
+</html>
